@@ -119,12 +119,6 @@ class BotService {
                 usage: '[URL YouTube]',
                 handler: 'handleYouTubeMusicDownload'
             }),
-            'igdl': this.createCommand('download', {
-                aliases: ['instagram', 'ig'],
-                description: 'Download media Instagram',
-                usage: '[URL Instagram]',
-                handler: 'handleInstagramDownload'
-            }),
 
             // Text Processing Commands
             'translate': this.createCommand('utility', {
@@ -236,6 +230,30 @@ class BotService {
                 description: 'Clear chat memory AI',
                 usage: '',
                 handler: 'handleClearMemory'
+            }),
+            'base64': this.createCommand('utility', {
+                aliases: ['b64', 'encode'],
+                description: 'Encode/decode text ke Base64',
+                usage: '[encode/decode] [text]',
+                handler: 'handleBase64'
+            }),
+            'tts': this.createCommand('utility', {
+                aliases: ['speak', 'voice'],
+                description: 'Convert text ke suara',
+                usage: '[text]',
+                handler: 'handleTextToSpeech'
+            }),
+            'calc': this.createCommand('utility', {
+                aliases: ['math', 'hitung'],
+                description: 'Kalkulator matematika',
+                usage: '[expresi matematika]',
+                handler: 'handleCalculator'
+            }),
+            'timer': this.createCommand('utility', {
+                aliases: ['remind', 'alarm'],
+                description: 'Set timer atau reminder',
+                usage: '[waktu dalam detik] [pesan]',
+                handler: 'handleTimer'
             }),
         };
     }
@@ -1028,9 +1046,17 @@ class BotService {
             const url = args[0];
             
             if (!url || !this.isValidYouTubeURL(url)) {
+                const supportedFormats = [
+                    '✅ https://www.youtube.com/watch?v=VIDEO_ID',
+                    '✅ https://youtu.be/VIDEO_ID',
+                    '✅ https://www.youtube.com/shorts/VIDEO_ID',
+                    '✅ https://music.youtube.com/watch?v=VIDEO_ID'
+                ];
+                
                 await this.sendReply(sessionId, groupJid, 
                     '❌ URL YouTube tidak valid!\n\n' +
-                    '📝 Format: .ytdl [URL YouTube]\n' +
+                    '📝 Format yang didukung:\n' +
+                    supportedFormats.join('\n') + '\n\n' +
                     '💡 Contoh: .ytdl https://youtube.com/watch?v=...'
                 );
                 return;
@@ -1041,13 +1067,15 @@ class BotService {
             const result = await this.downloadService.downloadYouTube(url);
             
             if (result.success) {
-                await this.sendReply(sessionId, groupJid, 
-                    `✅ *Video berhasil didownload!*\n\n` +
+                const responseText = `✅ *Video berhasil didownload!*\n\n` +
                     `📹 *Judul:* ${result.title}\n` +
+                    `👨‍💼 *Channel:* ${result.author}\n` +
                     `⏱️ *Durasi:* ${result.duration}\n` +
-                    `👁️ *Views:* ${result.views}\n\n` +
-                    `📎 File akan dikirim sebentar lagi...`
-                );
+                    `👁️ *Views:* ${result.views}\n` +
+                    `📦 *Ukuran:* ${result.size}\n\n` +
+                    `📎 File sedang dikirim...`;
+                
+                await this.sendReply(sessionId, groupJid, responseText);
                 
                 // Send video file
                 const session = this.getValidSession(sessionId);
@@ -1056,15 +1084,28 @@ class BotService {
                     caption: `🎬 ${result.title}`,
                     mimetype: 'video/mp4'
                 });
+                
+                console.log(`✅ YouTube video download completed: ${result.title}`);
             } else {
                 throw new Error(result.error || 'Download gagal');
             }
 
         } catch (error) {
             console.error('Error downloading YouTube:', error);
-            await this.sendReply(context.sessionId, context.groupJid, 
-                `❌ Gagal download YouTube: ${error.message}`
-            );
+            
+            // Check if it's a formatted error from DownloadService
+            const errorMessage = error.message;
+            if (errorMessage.includes('*') && errorMessage.includes('❌')) {
+                await this.sendReply(context.sessionId, context.groupJid, errorMessage);
+            } else {
+                await this.sendReply(context.sessionId, context.groupJid, 
+                    `❌ Gagal download YouTube: ${errorMessage}\n\n` +
+                    `💡 Tips:\n` +
+                    `• Pastikan URL valid dan dapat diakses\n` +
+                    `• Periksa durasi video (max 10 menit)\n` +
+                    `• Video harus dapat diputar publik`
+                );
+            }
         }
     }
 
@@ -1077,27 +1118,48 @@ class BotService {
             const url = args[0];
             
             if (!url || !this.isValidYouTubeURL(url)) {
+                const supportedFormats = [
+                    '✅ https://www.youtube.com/watch?v=VIDEO_ID',
+                    '✅ https://youtu.be/VIDEO_ID',
+                    '✅ https://music.youtube.com/watch?v=VIDEO_ID',
+                    '✅ https://music.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID'
+                ];
+                
                 await this.sendReply(sessionId, groupJid, 
-                    '❌ URL YouTube tidak valid!\n\n' +
-                    '📝 Format: .ytmusic [URL YouTube]\n' +
-                    '💡 Contoh: .ytmusic https://youtube.com/watch?v=...'
+                    '❌ URL YouTube/YouTube Music tidak valid!\n\n' +
+                    '📝 Format yang didukung:\n' +
+                    supportedFormats.join('\n') + '\n\n' +
+                    '💡 Contoh: .music https://music.youtube.com/watch?v=...'
                 );
                 return;
             }
 
-            await this.sendReply(sessionId, groupJid, '🎵 Sedang memproses download audio YouTube...');
+            // Detect source platform
+            const isYouTubeMusic = this.downloadService.isYouTubeMusicUrl ? 
+                this.downloadService.isYouTubeMusicUrl(url) : 
+                url.includes('music.youtube.com');
+            
+            const platform = isYouTubeMusic ? 'YouTube Music' : 'YouTube';
+            
+            await this.sendReply(sessionId, groupJid, 
+                `🎵 Sedang memproses download audio dari ${platform}...\n\n` +
+                `📱 Platform: ${platform}\n` +
+                `🔗 URL: ${url.substring(0, 50)}...`
+            );
             
             const result = await this.downloadService.downloadYouTubeMusic(url);
             
             if (result.success) {
-                await this.sendReply(sessionId, groupJid, 
-                    `✅ *Audio berhasil didownload!*\n\n` +
+                const responseText = `✅ *Audio berhasil didownload!*\n\n` +
                     `🎵 *Judul:* ${result.title}\n` +
+                    `👨‍🎤 *Artist:* ${result.author}\n` +
                     `⏱️ *Durasi:* ${result.duration}\n` +
-                    `👁️ *Views:* ${result.views}\n` +
-                    `🎧 *Format:* MP3\n\n` +
-                    `📎 File akan dikirim sebentar lagi...`
-                );
+                    `🎧 *Kualitas:* ${result.quality}\n` +
+                    `📦 *Ukuran:* ${result.size}\n` +
+                    `📱 *Sumber:* ${result.source || platform}\n\n` +
+                    `📎 File sedang dikirim...`;
+                
+                await this.sendReply(sessionId, groupJid, responseText);
                 
                 // Send audio file
                 const session = this.getValidSession(sessionId);
@@ -1105,60 +1167,32 @@ class BotService {
                     audio: result.buffer,
                     mimetype: 'audio/mpeg',
                     ptt: false,
-                    fileName: `${result.title}.mp3`
+                    fileName: `${result.title.replace(/[^a-zA-Z0-9 ]/g, '')}.mp3`
                 });
+                
+                console.log(`✅ ${platform} audio download completed: ${result.title}`);
             } else {
                 throw new Error(result.error || 'Download audio gagal');
             }
 
         } catch (error) {
             console.error('Error downloading YouTube music:', error);
-            await this.sendReply(context.sessionId, context.groupJid, 
-                `❌ Gagal download audio YouTube: ${error.message}`
-            );
-        }
-    }
-    async handleInstagramDownload(context) {
-        try {
-            const { sessionId, groupJid, args } = context;
-            const url = args[0];
             
-            if (!url || !this.isValidInstagramURL(url)) {
-                await this.sendReply(sessionId, groupJid, 
-                    '❌ URL Instagram tidak valid!\n\n' +
-                    '📝 Format: .igdl [URL Instagram]\n' +
-                    '💡 Contoh: .igdl https://instagram.com/p/...'
-                );
-                return;
-            }
-
-            await this.sendReply(sessionId, groupJid, '🔄 Sedang memproses download Instagram...');
-            
-            const result = await this.downloadService.downloadInstagram(url);
-            
-            if (result.success) {
-                const session = this.getValidSession(sessionId);
-                
-                if (result.type === 'image') {
-                    await session.sock.sendMessage(groupJid, {
-                        image: result.buffer,
-                        caption: `📸 Instagram: ${result.caption || 'No caption'}`
-                    });
-                } else if (result.type === 'video') {
-                    await session.sock.sendMessage(groupJid, {
-                        video: result.buffer,
-                        caption: `🎬 Instagram: ${result.caption || 'No caption'}`
-                    });
-                }
+            // Check if it's a custom formatted error (from DownloadService)
+            const errorMessage = error.message;
+            if (errorMessage.includes('*') && errorMessage.includes('❌')) {
+                // This is a formatted error from DownloadService
+                await this.sendReply(context.sessionId, context.groupJid, errorMessage);
             } else {
-                throw new Error(result.error || 'Download gagal');
+                // Generic error
+                await this.sendReply(context.sessionId, context.groupJid, 
+                    `❌ Gagal download audio: ${errorMessage}\n\n` +
+                    `💡 Tips:\n` +
+                    `• Pastikan URL valid dan dapat diakses\n` +
+                    `• Coba gunakan URL YouTube Music langsung\n` +
+                    `• Periksa durasi video (max 15-20 menit)`
+                );
             }
-
-        } catch (error) {
-            console.error('Error downloading Instagram:', error);
-            await this.sendReply(context.sessionId, context.groupJid, 
-                `❌ Gagal download Instagram: ${error.message}`
-            );
         }
     }
 
@@ -1298,48 +1332,6 @@ class BotService {
     }
 
     // ==================== ADMIN HANDLERS ====================
-
-    /**
-     * Handle broadcast message
-     */
-    async handleBroadcast(context) {
-        try {
-            const { sessionId, args } = context;
-            const message = args.join(' ');
-            
-            if (!message) {
-                await this.sendReply(sessionId, context.groupJid, 
-                    '❌ Berikan pesan untuk broadcast!\n\n' +
-                    '📝 Format: .broadcast [pesan]'
-                );
-                return;
-            }
-
-            const sessions = this.sessionService.getAllSessions();
-            let sentCount = 0;
-
-            for (const session of sessions) {
-                try {
-                    if (session.isConnected) {
-                        await session.sock.sendMessage(session.jid, {
-                            text: `📢 *BROADCAST MESSAGE*\n\n${message}`
-                        });
-                        sentCount++;
-                    }
-                } catch (error) {
-                    console.error(`Failed to send broadcast to ${session.jid}:`, error);
-                }
-            }
-
-            await this.sendReply(sessionId, context.groupJid, 
-                `✅ Broadcast terkirim ke ${sentCount} chat!`
-            );
-
-        } catch (error) {
-            console.error('Error in broadcast:', error);
-            await this.sendReply(context.sessionId, context.groupJid, '❌ Gagal mengirim broadcast.');
-        }
-    }
 
     /**
      * Handle ban user
@@ -1603,17 +1595,6 @@ class BotService {
     }
 
     /**
-     * Format file size
-     */
-    formatFileSize(bytes) {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-    }
-
-    /**
      * Build help text
      */
     buildHelpText() {
@@ -1660,11 +1641,11 @@ class BotService {
     // ==================== UTILITY METHODS ====================
 
     /**
-     * Validate YouTube URL
+     * Validate YouTube URL (including YouTube Music)
      */
     isValidYouTubeURL(url) {
-        const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
-        return youtubeRegex.test(url);
+        // Use DownloadService validation for comprehensive URL support
+        return this.downloadService.validateYouTubeUrl(url);
     }
 
     /**
@@ -1712,6 +1693,8 @@ class BotService {
                 filename: 'image.jpg',
                 contentType: 'image/jpeg'
             });
+
+            console.log(formData.getBuffer());
 
             const response = await axios.post('https://api.trace.moe/search', formData, {
                 headers: {
@@ -1969,6 +1952,233 @@ class BotService {
 
         } catch (error) {
             console.error('Error handling inappropriate content:', error);
+        }
+    }
+
+    /**
+     * Handle Base64 Encoder/Decoder
+     */
+    async handleBase64(context) {
+        try {
+            const { sessionId, groupJid, args } = context;
+            
+            if (args.length < 2) {
+                await this.sendReply(sessionId, groupJid, 
+                    '❌ Format salah!\n\n' +
+                    '📝 Format: .base64 [encode/decode] [text]\n' +
+                    '💡 Contoh: .base64 encode Hello World\n' +
+                    '🔄 Contoh: .base64 decode SGVsbG8gV29ybGQ='
+                );
+                return;
+            }
+
+            const action = args[0].toLowerCase();
+            const text = args.slice(1).join(' ');
+
+            let result;
+            if (action === 'encode') {
+                result = Buffer.from(text, 'utf8').toString('base64');
+                await this.sendReply(sessionId, groupJid,
+                    `🔐 *Base64 Encoded*\n\n` +
+                    `📝 *Original:*\n${text}\n\n` +
+                    `🔒 *Encoded:*\n${result}`
+                );
+            } else if (action === 'decode') {
+                try {
+                    result = Buffer.from(text, 'base64').toString('utf8');
+                    await this.sendReply(sessionId, groupJid,
+                        `🔓 *Base64 Decoded*\n\n` +
+                        `🔒 *Encoded:*\n${text}\n\n` +
+                        `📝 *Decoded:*\n${result}`
+                    );
+                } catch (decodeError) {
+                    throw new Error('Invalid Base64 string');
+                }
+            } else {
+                throw new Error('Action harus "encode" atau "decode"');
+            }
+
+        } catch (error) {
+            console.error('Error with Base64:', error);
+            await this.sendReply(context.sessionId, context.groupJid, 
+                `❌ ${error.message || 'Gagal memproses Base64'}`
+            );
+        }
+    }
+
+
+    /**
+     * Handle Text to Speech
+     */
+    async handleTextToSpeech(context) {
+        try {
+            const { sessionId, groupJid, args } = context;
+            const text = args.join(' ');
+            
+            if (!text || text.length > 200) {
+                await this.sendReply(sessionId, groupJid, 
+                    '❌ Text tidak valid!\n\n' +
+                    '📝 Format: .tts [text]\n' +
+                    '💡 Contoh: .tts Hello World\n' +
+                    '📏 Maksimal 200 karakter'
+                );
+                return;
+            }
+
+            await this.sendReply(sessionId, groupJid, '🎤 Sedang mengubah text ke suara...');
+
+            // Using Google TTS API
+            const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=id&client=tw-ob`;
+            
+            const response = await axios({
+                method: 'GET',
+                url: ttsUrl,
+                responseType: 'arraybuffer',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const session = this.getValidSession(sessionId);
+            await session.sock.sendMessage(groupJid, {
+                audio: Buffer.from(response.data),
+                mimetype: 'audio/mpeg',
+                ptt: true
+            });
+
+        } catch (error) {
+            console.error('Error with TTS:', error);
+            await this.sendReply(context.sessionId, context.groupJid, 
+                '❌ Gagal mengubah text ke suara. Coba text yang lebih pendek.'
+            );
+        }
+    }
+
+
+    /**
+     * Handle Math Calculator
+     */
+    async handleCalculator(context) {
+        try {
+            const { sessionId, groupJid, args } = context;
+            const expression = args.join(' ');
+            
+            if (!expression) {
+                await this.sendReply(sessionId, groupJid, 
+                    '❌ Expresi matematika tidak boleh kosong!\n\n' +
+                    '📝 Format: .calc [expresi]\n' +
+                    '💡 Contoh: .calc 2 + 2 * 3\n' +
+                    '🔢 Support: +, -, *, /, %, ^, sqrt(), sin(), cos(), tan()'
+                );
+                return;
+            }
+
+            // Security: Only allow safe mathematical expressions
+            const safeExpression = expression.replace(/[^0-9+\-*/.() ]/g, '');
+            
+            // Replace some functions
+            let mathExpression = safeExpression
+                .replace(/\^/g, '**')
+                .replace(/sqrt\(/g, 'Math.sqrt(')
+                .replace(/sin\(/g, 'Math.sin(')
+                .replace(/cos\(/g, 'Math.cos(')
+                .replace(/tan\(/g, 'Math.tan(');
+
+            try {
+                const result = eval(mathExpression);
+                
+                if (isNaN(result) || !isFinite(result)) {
+                    throw new Error('Invalid calculation result');
+                }
+
+                await this.sendReply(sessionId, groupJid,
+                    `🧮 *Calculator*\n\n` +
+                    `📝 *Expression:* ${expression}\n` +
+                    `🔢 *Result:* ${result}\n\n` +
+                    `💡 *Scientific notation:* ${result.toExponential(2)}`
+                );
+
+            } catch (evalError) {
+                throw new Error('Invalid mathematical expression');
+            }
+
+        } catch (error) {
+            console.error('Error calculating:', error);
+            await this.sendReply(context.sessionId, context.groupJid, 
+                '❌ Gagal menghitung. Pastikan expresi matematika valid.'
+            );
+        }
+    }
+
+    /**
+     * Handle Timer/Reminder
+     */
+    async handleTimer(context) {
+        try {
+            const { sessionId, groupJid, senderJid, args } = context;
+            
+            if (args.length < 1) {
+                await this.sendReply(sessionId, groupJid, 
+                    '❌ Format salah!\n\n' +
+                    '📝 Format: .timer [detik] [pesan]\n' +
+                    '💡 Contoh: .timer 60 Waktunya istirahat\n' +
+                    '⏰ Contoh: .timer 300 Meeting dimulai'
+                );
+                return;
+            }
+
+            const seconds = parseInt(args[0]);
+            const message = args.slice(1).join(' ') || 'Timer selesai!';
+            
+            if (isNaN(seconds) || seconds < 1 || seconds > 3600) {
+                await this.sendReply(sessionId, groupJid, 
+                    '❌ Waktu harus antara 1-3600 detik (1 jam maksimal)!'
+                );
+                return;
+            }
+
+            const senderNumber = senderJid.split('@')[0];
+            const endTime = new Date(Date.now() + seconds * 1000);
+            
+            await this.sendReply(sessionId, groupJid,
+                `⏰ *Timer Set!*\n\n` +
+                `👤 *User:* @${senderNumber}\n` +
+                `⏱️ *Duration:* ${seconds} detik\n` +
+                `📝 *Message:* ${message}\n` +
+                `🕐 *Selesai:* ${endTime.toLocaleString('id-ID')}\n\n` +
+                `✅ Timer akan mengingatkan Anda!`
+            );
+
+            // Set timeout for reminder
+            setTimeout(async () => {
+                try {
+                    await this.sendMessage(sessionId, groupJid, {
+                        text: `⏰ *TIMER REMINDER*\n\n` +
+                               `👤 *For:* @${senderNumber}\n` +
+                               `📝 *Message:* ${message}\n` +
+                               `🕐 *Time:* ${new Date().toLocaleString('id-ID')}`,
+                        mentions: [senderJid]
+                    });
+                } catch (reminderError) {
+                    console.error('Error sending timer reminder:', reminderError);
+                }
+            }, seconds * 1000);
+
+        } catch (error) {
+            console.error('Error setting timer:', error);
+            await this.sendReply(context.sessionId, context.groupJid, 
+                '❌ Gagal mengatur timer.'
+            );
+        }
+    }
+
+    // Helper function for URL validation
+    isValidUrl(string) {
+        try {
+            new URL(string);
+            return true;
+        } catch (_) {
+            return false;
         }
     }
 }

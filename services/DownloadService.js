@@ -229,31 +229,126 @@ class DownloadService {
     // Download YouTube Music (MP3 format)
     async downloadYouTubeMusic(url) {
         try {
+            // Validate YouTube URL
+            if (!this.validateYouTubeUrl(url)) {
+                throw new Error('URL YouTube tidak valid atau tidak didukung');
+            }
+
+            // Check if ytdl-core is available
+            if (!this.isYtdlAvailable()) {
+                throw new Error('Library ytdl-core tidak tersedia. Pastikan sudah terinstall.');
+            }
+
+            // Get video info first and convert YouTube Music URL to regular YouTube URL
             const videoInfo = await this.getYouTubeInfo(url);
+            const downloadUrl = videoInfo.url; // This will be the converted regular YouTube URL
             
-            // Enhanced mock response for YouTube Music specifically
-            throw new Error(`
-🎵 *YouTube Music Downloader*
+            // Check if this is a YouTube Music URL for better error messages
+            const isYouTubeMusic = url.includes('music.youtube.com');
+            
+            // Try to use ytdl-core for audio download
+            try {
+                const ytdl = require('@distube/ytdl-core');
+                
+                // Get video info using the regular YouTube URL
+                const info = await ytdl.getInfo(downloadUrl);
+                const videoDetails = info.videoDetails;
+                
+                // Check duration (max 20 minutes for music from YouTube Music, 15 for regular)
+                const maxDuration = isYouTubeMusic ? 1200 : 900; // 20 min for YouTube Music, 15 min for regular
+                const duration = parseInt(videoDetails.lengthSeconds);
+                if (duration > maxDuration) {
+                    const maxMinutes = Math.floor(maxDuration / 60);
+                    throw new Error(`Audio terlalu panjang! Maksimal ${maxMinutes} menit untuk ${isYouTubeMusic ? 'YouTube Music' : 'musik'}.`);
+                }
+                
+                // Get best audio quality format
+                const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+                if (!audioFormats || audioFormats.length === 0) {
+                    throw new Error('Format audio tidak tersedia untuk video ini');
+                }
+                
+                // Choose highest quality audio
+                const format = audioFormats.reduce((best, current) => {
+                    const bestBitrate = parseInt(best.audioBitrate) || 0;
+                    const currentBitrate = parseInt(current.audioBitrate) || 0;
+                    return currentBitrate > bestBitrate ? current : best;
+                });
+                
+                // Download audio stream with size monitoring
+                const audioStream = ytdl(downloadUrl, { 
+                    format: format,
+                    quality: 'highestaudio'
+                });
+                
+                const chunks = [];
+                let totalSize = 0;
+                const sizeLimit = this.getFileSizeLimit('music');
+                
+                for await (const chunk of audioStream) {
+                    totalSize += chunk.length;
+                    
+                    // Check size during download
+                    if (totalSize > sizeLimit) {
+                        throw new Error(`File audio melebihi batas ukuran maksimal (${this.formatFileSize(sizeLimit)})`);
+                    }
+                    
+                    chunks.push(chunk);
+                }
+                
+                const buffer = Buffer.concat(chunks);
+                
+                // Save to temp file
+                const filename = `${isYouTubeMusic ? 'ytmusic' : 'music'}_${Date.now()}.${format.container || 'mp4'}`;
+                const filepath = path.join(this.tempDir, filename);
+                fs.writeFileSync(filepath, buffer);
+                
+                return {
+                    success: true,
+                    buffer: buffer,
+                    filepath: filepath,
+                    filename: filename,
+                    title: videoDetails.title,
+                    duration: this.formatDuration(duration),
+                    author: videoDetails.author.name,
+                    size: this.formatFileSize(buffer.length),
+                    quality: format.audioBitrate ? `${format.audioBitrate}kbps` : 'Unknown',
+                    contentType: format.mimeType || 'audio/mp4',
+                    source: isYouTubeMusic ? 'YouTube Music' : 'YouTube',
+                    originalUrl: url
+                };
+                
+            } catch (ytdlError) {
+                console.error('ytdl-core error:', ytdlError);
+                
+                // Fallback to alternative method or provide helpful error
+                throw new Error(`
+🎵 *YouTube Music Download Error*
 
-📱 *Fitur dalam pengembangan...*
+❌ *Gagal mengunduh:* ${ytdlError.message}
 
-Untuk mengaktifkan fitur ini diperlukan:
-• Library ytdl-core atau yt-dlp
-• FFmpeg untuk konversi MP3
-• Server dengan storage memadai
+💡 *Kemungkinan penyebab:*
+• Video pribadi atau terbatas
+• Koneksi internet tidak stabil
+• Format audio tidak tersedia
+• Video terlalu panjang (>15 menit)
 
-💡 *Alternatif sementara:*
-• Gunakan website converter: ytmp3.cc
-• Copy link: ${url}
+� *Solusi:*
+• Coba link YouTube lain
+• Pastikan video dapat diputar
+• Gunakan link YouTube Music jika tersedia
 
-🔧 *Progress:* 75% - Coming Soon!
-            `.trim());
+📱 *Alternatif:* Gunakan website ytmp3.cc
+Link: ${url}
+                `.trim());
+            }
 
         } catch (error) {
             console.error('Error downloading YouTube music:', error);
             
             // If it's our custom error, throw as is
-            if (error.message.includes('YouTube Music Downloader')) {
+            if (error.message.includes('YouTube Music Download Error') || 
+                error.message.includes('Audio terlalu panjang')) {
                 throw error;
             }
             
@@ -264,35 +359,11 @@ Untuk mengaktifkan fitur ini diperlukan:
     // Download audio from YouTube
     async downloadYouTubeAudio(url) {
         try {
-            const videoInfo = await this.getYouTubeInfo(url);
-            
-            // For now, provide a mock response with proper error message
-            // In production, you would install ytdl-core: npm install ytdl-core
-            // and implement real YouTube download functionality
-            
-            throw new Error(`
-📱 *Fitur Download YouTube Audio*
-
-Untuk mengaktifkan fitur ini, diperlukan:
-• Install library ytdl-core
-• Konfigurasi server tambahan
-• Pengaturan proxy (opsional)
-
-💡 *Alternatif sementara:*
-• Gunakan website converter online
-• Copy link: ${url}
-
-🔧 *Status:* Dalam pengembangan
-            `.trim());
+            // Use the same logic as downloadYouTubeMusic
+            return await this.downloadYouTubeMusic(url);
 
         } catch (error) {
             console.error('Error downloading YouTube audio:', error);
-            
-            // If it's our custom error, throw as is
-            if (error.message.includes('Fitur Download YouTube Audio')) {
-                throw error;
-            }
-            
             throw new Error('Gagal download audio: ' + error.message);
         }
     }
@@ -302,26 +373,92 @@ Untuk mengaktifkan fitur ini, diperlukan:
         try {
             const videoInfo = await this.getYouTubeInfo(url);
             
-            throw new Error(`
-📹 *Fitur Download YouTube Video*
+            // Try to use ytdl-core for video download
+            try {
+                const ytdl = require('@distube/ytdl-core');
+                
+                // Get video info
+                const info = await ytdl.getInfo(url);
+                const videoDetails = info.videoDetails;
+                
+                // Check duration (max 10 minutes for video)
+                const duration = parseInt(videoDetails.lengthSeconds);
+                if (duration > 600) {
+                    throw new Error('Video terlalu panjang! Maksimal 10 menit.');
+                }
+                
+                // Get best quality format with video and audio
+                const format = ytdl.chooseFormat(info.formats, { 
+                    quality: 'highestvideo',
+                    filter: 'videoandaudio'
+                });
+                
+                if (!format) {
+                    throw new Error('Format video tidak tersedia');
+                }
+                
+                // Download video
+                const videoStream = ytdl(url, { 
+                    format: format,
+                    quality: 'highestvideo'
+                });
+                
+                const chunks = [];
+                for await (const chunk of videoStream) {
+                    chunks.push(chunk);
+                }
+                
+                const buffer = Buffer.concat(chunks);
+                
+                // Save to temp file
+                const filename = `video_${Date.now()}.${format.container || 'mp4'}`;
+                const filepath = path.join(this.tempDir, filename);
+                fs.writeFileSync(filepath, buffer);
+                
+                return {
+                    success: true,
+                    buffer: buffer,
+                    filepath: filepath,
+                    filename: filename,
+                    title: videoDetails.title,
+                    duration: this.formatDuration(duration),
+                    views: this.formatViews(videoDetails.viewCount),
+                    author: videoDetails.author.name,
+                    size: this.formatFileSize(buffer.length),
+                    quality: format.qualityLabel || 'Unknown',
+                    contentType: format.mimeType || 'video/mp4'
+                };
+                
+            } catch (ytdlError) {
+                console.error('ytdl-core error:', ytdlError);
+                
+                throw new Error(`
+📹 *YouTube Video Download Error*
 
-Untuk mengaktifkan fitur ini, diperlukan:
-• Install library ytdl-core
-• Server dengan bandwidth tinggi
-• Storage yang cukup besar
+❌ *Gagal mengunduh:* ${ytdlError.message}
 
-💡 *Alternatif sementara:*
-• Gunakan website converter online
-• Copy link: ${url}
+💡 *Kemungkinan penyebab:*
+• Video pribadi atau terbatas
+• File terlalu besar (>50MB)
+• Format tidak tersedia
+• Video terlalu panjang (>10 menit)
 
-🔧 *Status:* Dalam pengembangan
-            `.trim());
+🔧 *Solusi:*
+• Coba video YouTube lain
+• Pilih video dengan durasi <10 menit
+• Pastikan video dapat diputar publik
+
+📱 *Alternatif:* Gunakan website savefrom.net
+Link: ${url}
+                `.trim());
+            }
 
         } catch (error) {
             console.error('Error downloading YouTube video:', error);
             
             // If it's our custom error, throw as is
-            if (error.message.includes('Fitur Download YouTube Video')) {
+            if (error.message.includes('YouTube Video Download Error') || 
+                error.message.includes('Video terlalu panjang')) {
                 throw error;
             }
             
@@ -329,16 +466,28 @@ Untuk mengaktifkan fitur ini, diperlukan:
         }
     }
 
-    // Get YouTube video info
+    // Get YouTube video info (including YouTube Music)
     async getYouTubeInfo(url) {
         try {
-            // Enhanced regex for YouTube URLs
-            const videoIdMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/)|youtu\.be\/|youtube\.com\/shorts\/)([^&\n?#]+)/);
+            // Enhanced regex for YouTube URLs including YouTube Music
+            let videoIdMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/)|youtu\.be\/|youtube\.com\/shorts\/)([^&\n?#]+)/);
+            
+            // Try YouTube Music patterns if normal YouTube patterns don't match
+            if (!videoIdMatch) {
+                videoIdMatch = url.match(/music\.youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})/);
+                if (!videoIdMatch) {
+                    videoIdMatch = url.match(/music\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/);
+                }
+            }
+            
             if (!videoIdMatch) {
                 throw new Error('URL YouTube tidak valid');
             }
 
             const videoId = videoIdMatch[1];
+            
+            // Convert YouTube Music URL to regular YouTube URL for better compatibility
+            const regularYouTubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
             
             // Try to get basic info from YouTube API or fallback to basic info
             try {
@@ -360,7 +509,8 @@ Untuk mengaktifkan fitur ini, diperlukan:
                 //             title: video.snippet.title,
                 //             thumbnail: video.snippet.thumbnails.maxresdefault?.url || video.snippet.thumbnails.high.url,
                 //             duration: video.contentDetails.duration,
-                //             url: url
+                //             url: regularYouTubeUrl,
+                //             originalUrl: url
                 //         };
                 //     }
                 // }
@@ -368,9 +518,10 @@ Untuk mengaktifkan fitur ini, diperlukan:
                 // Fallback to basic info
                 return {
                     videoId,
-                    title: `YouTube Video - ${videoId}`,
+                    title: `YouTube Music - ${videoId}`,
                     thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                    url: url,
+                    url: regularYouTubeUrl,
+                    originalUrl: url,
                     channel: 'Unknown Channel'
                 };
                 
@@ -378,9 +529,10 @@ Untuk mengaktifkan fitur ini, diperlukan:
                 console.log('YouTube API not available, using basic info');
                 return {
                     videoId,
-                    title: `YouTube Video - ${videoId}`,
+                    title: `YouTube Music - ${videoId}`,
                     thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                    url: url
+                    url: regularYouTubeUrl,
+                    originalUrl: url
                 };
             }
             
@@ -396,60 +548,6 @@ Untuk mengaktifkan fitur ini, diperlukan:
             return true;
         } catch (_) {
             return false;
-        }
-    }
-
-    // Check if URL is YouTube
-    isYouTubeUrl(url) {
-        return /(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)/.test(url);
-    }
-
-    // Validate image URL
-    isImageUrl(url) {
-        return /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url);
-    }
-
-    // Download from direct URL
-    async downloadFromDirectUrl(url, type = 'file') {
-        try {
-            const response = await axios({
-                method: 'GET',
-                url: url,
-                responseType: 'arraybuffer',
-                timeout: 60000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-
-            const buffer = Buffer.from(response.data);
-            const contentType = response.headers['content-type'] || 'application/octet-stream';
-            
-            let extension = '.bin';
-            if (type === 'image') {
-                extension = this.getImageExtension(contentType);
-            } else if (type === 'audio') {
-                extension = contentType.includes('audio/mp3') ? '.mp3' : 
-                           contentType.includes('audio/mp4') ? '.mp4' : 
-                           contentType.includes('audio/wav') ? '.wav' : '.mp3';
-            }
-            
-            const filename = `${type}_${Date.now()}${extension}`;
-            const filepath = path.join(this.tempDir, filename);
-            
-            fs.writeFileSync(filepath, buffer);
-
-            return {
-                success: true,
-                buffer: buffer,
-                filepath: filepath,
-                filename: filename,
-                size: buffer.length,
-                contentType: contentType
-            };
-
-        } catch (error) {
-            throw new Error(`Gagal download ${type}: ` + error.message);
         }
     }
 
@@ -480,7 +578,7 @@ Untuk mengaktifkan fitur ini, diperlukan:
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    // YouTube download
+    // YouTube download (general purpose)
     async downloadYouTube(url) {
         try {
             const ytdl = require('@distube/ytdl-core');
@@ -518,14 +616,22 @@ Untuk mengaktifkan fitur ini, diperlukan:
             
             const buffer = Buffer.concat(chunks);
             
+            // Save to temp file
+            const filename = `youtube_${Date.now()}.${format.container || 'mp4'}`;
+            const filepath = path.join(this.tempDir, filename);
+            fs.writeFileSync(filepath, buffer);
+            
             return {
                 success: true,
                 buffer: buffer,
+                filepath: filepath,
+                filename: filename,
                 title: videoDetails.title,
                 duration: this.formatDuration(duration),
                 views: this.formatViews(videoDetails.viewCount),
                 author: videoDetails.author.name,
-                size: this.formatFileSize(buffer.length)
+                size: this.formatFileSize(buffer.length),
+                contentType: format.mimeType || 'video/mp4'
             };
             
         } catch (error) {
@@ -533,52 +639,6 @@ Untuk mengaktifkan fitur ini, diperlukan:
             return {
                 success: false,
                 error: error.message || 'Gagal download YouTube'
-            };
-        }
-    }
-
-    // Instagram download
-    async downloadInstagram(url) {
-        try {
-            const { instagramdl } = require('instagram-url-direct');
-            
-            const result = await instagramdl(url);
-            
-            if (!result || result.length === 0) {
-                throw new Error('Media tidak ditemukan');
-            }
-            
-            const media = result[0];
-            const downloadUrl = media.download_link;
-            
-            // Download media
-            const response = await axios({
-                method: 'GET',
-                url: downloadUrl,
-                responseType: 'arraybuffer',
-                timeout: 60000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
-                }
-            });
-            
-            const buffer = Buffer.from(response.data);
-            const contentType = response.headers['content-type'] || '';
-            const isVideo = contentType.includes('video') || downloadUrl.includes('.mp4');
-            
-            return {
-                success: true,
-                buffer: buffer,
-                type: isVideo ? 'video' : 'image',
-                caption: media.caption || '',
-                size: this.formatFileSize(buffer.length)
-            };
-            
-        } catch (error) {
-            console.error('Instagram download error:', error);
-            return {
-                success: false,
-                error: error.message || 'Gagal download Instagram'
             };
         }
     }
@@ -606,6 +666,41 @@ Untuk mengaktifkan fitur ini, diperlukan:
         } else {
             return count.toString();
         }
+    }
+
+    // Check if ytdl-core is available
+    isYtdlAvailable() {
+        try {
+            require('@distube/ytdl-core');
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    // Validate YouTube URL more strictly (including YouTube Music)
+    validateYouTubeUrl(url) {
+        const patterns = [
+            /^https?:\/\/(www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+            /^https?:\/\/(www\.)?youtu\.be\/([a-zA-Z0-9_-]{11})/,
+            /^https?:\/\/(www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+            /^https?:\/\/(www\.)?youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
+            /^https?:\/\/(www\.)?youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+            /^https?:\/\/music\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+            /^https?:\/\/music\.youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})/
+        ];
+        
+        return patterns.some(pattern => pattern.test(url));
+    }
+
+    // Get file size limit based on type
+    getFileSizeLimit(type) {
+        const limits = {
+            'music': 50 * 1024 * 1024,   // 50MB for music
+            'video': 100 * 1024 * 1024,  // 100MB for video
+            'image': 10 * 1024 * 1024    // 10MB for image
+        };
+        return limits[type] || 25 * 1024 * 1024; // 25MB default
     }
 }
 
