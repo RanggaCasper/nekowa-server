@@ -1,0 +1,45 @@
+[Unit]
+Description=WhatsApp Gateway Multi-Device Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+StartLimitBurst=3
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/whatsapp-gateway
+ExecStart=/usr/bin/node server.js
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+TimeoutStopSec=30
+
+# Environment variables
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/whatsapp-gateway
+ReadWritePaths=/var/log/whatsapp-gateway
+ReadWritePaths=/tmp
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=append:/var/log/whatsapp-gateway/output.log
+StandardError=append:/var/log/whatsapp-gateway/error.log
+SyslogIdentifier=whatsapp-gateway
+
+# Watchdog
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target
