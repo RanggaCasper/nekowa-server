@@ -28,9 +28,7 @@ print_error() {
 
 # Check if running as root
 if [[ $EUID -eq 0 ]]; then
-   print_error "This script should not be run as root for security reasons"
-   print_status "Please run as a regular user with sudo privileges"
-   exit 1
+   print_warning "Running as root. Proceeding anyway (not recommended for production)."
 fi
 
 # Update system packages
